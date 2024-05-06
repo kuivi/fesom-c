@@ -552,6 +552,11 @@ close(22)
      ! ouput only for control
      !=======================
 
+    call energy(eout)
+
+    if (mype==0) then
+      write(53,'(4e16.7)') time/86400.0_WP-time_jd0,eout
+    endif  
 
      if ( enable_output_main_switch .AND. mod(n_dt,IREP)==0 ) then
 
@@ -655,12 +660,12 @@ close(22)
         end if
         endif
 
-        call energy(eout)
+        !call energy(eout)
 
         if (mype==0) then
            print *,'Energy ENERGY ENERGY : ',eout
            write(*,*) "icedyn_tmask = ",icedyn_tmask
-           write(53,'(4e16.7)') time/86400.0_WP-time_jd0,eout
+           !write(53,'(4e16.7)') time/86400.0_WP-time_jd0,eout
            if (iverbosity >= 1) then
               write(*,*) 'time= ',time/86400.0_WP-time_jd0,'time_all= ',time/86400.0_WP-time_jd0
               write(*,*)  ' energy= ',eout
