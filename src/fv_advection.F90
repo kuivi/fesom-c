@@ -154,6 +154,14 @@ SUBROUTINE momentum_adv_upwind
         ! If it is positive, take velocity in the left element (el(1)),
         ! and use the velocity at el(2) otherwise.
         !======
+        
+        ! According to FVCOM paper 2003, they do not use linear
+        ! reconstruction other than to estimate the normal velocity.
+        ! To get their scheme, uncomment 4 lines below:
+        u1=U_n(nz,el(1))
+        v1=V_n(nz,el(1))
+        u2=U_n(nz,el(2))
+        v2=V_n(nz,el(2))           
 
         if(un>=0.0_WP) then
            uu(nz,ed) = u1*un*acc
