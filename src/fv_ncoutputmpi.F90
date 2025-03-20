@@ -772,6 +772,17 @@ CONTAINS
       varlist(nvar)%vertdim =        1 ! vertical dimension 0 , 1 (verticaly resolved) sigma, 2 sigmam1
       varlist(nvar)%type_task =      3 ! T,S,... =3, U_n,V_n,... =2, eta_n,... =1
       varlist(nvar)%varid =          nvar !54 ! ID of variable
+
+      nvar=nvar+1
+      varlist(nvar)%name =           'w_cart' ! name
+      varlist(nvar)%modelname =      'W_n' ! name of variable in model
+      varlist(nvar)%standard_name =  'vertical velocity cartesian'! full variable name in the NetCDF file
+      varlist(nvar)%units =          'm/s'! variable units in the NetCDF file
+      varlist(nvar)%onnode =         1 ! if on nod =1 , if on elements =0, other =-1
+      varlist(nvar)%timedim =        1 ! time dimension 0 (not in time), 1 (in time)
+      varlist(nvar)%vertdim =        1 ! vertical dimension 0 , 1 (verticaly resolved) sigma, 2 sigmam1
+      varlist(nvar)%type_task =      2 ! T,S,... =3, U_n,V_n,... =2, eta_n,... =1
+      varlist(nvar)%varid =          nvar !55 ! ID of variable      
 !      if (key_passive_tracers) then
 !        do i = 1, i_pastr
 !          nvar=nvar+1
@@ -1140,6 +1151,8 @@ CONTAINS
             varbas2d(i)%snapshot =  bt
          case(54)
             varbas2d(i)%snapshot =  tke_dissip
+         case(55)
+            varbas2d(i)%snapshot =  W_n            
 
 !         case(25:24+9)!size(biomodel%state_variables))
 !            varbas2d(i)%snapshot =  Tpass(:,:,varbas2d(i)%varid-24)

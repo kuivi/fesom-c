@@ -457,83 +457,124 @@ SUBROUTINE vert_vel_sigma
 !==========================================================================
 SUBROUTINE vert_vel_cart
 
-USE o_MESH
-USE o_ARRAYS
-USE o_PARAM
-IMPLICIT NONE
+  use o_MESH
+  use o_ARRAYS
+  use o_PARAM
+  use g_PARSUP
+
+#ifdef USE_MPI
+  use g_comm_auto
+#endif
+  IMPLICIT NONE
 !
 ! -div(Hu) is computed in cycle over edges
 !
 ! The depth is estimated at elements
 ! c1 is -u_n*L_left*d1, c2  -u_n*L_right*d1
 
-integer                      :: ed, el(2),el1,enodes(2), elnodes(4), elem, n, nz
-real(kind=WP)           :: c1, c2, fD(4), delta, a, b, wad_nodes
-real(Kind=WP), allocatable   :: auh_elem(:,:), w_rhs(:,:)
+  integer       :: ed, el(2),el1,enodes(2), elnodes(4), elem, n, nz
+  real(kind=WP) :: c1, c2, fD(4), delta, a, b, wad_nodes
+  real(Kind=WP), allocatable   :: auh_elem(:,:), w_rhs(:,:)
+  integer :: edglim
 
-allocate(auh_elem(nsigma-1,elem2D), w_rhs(nsigma-1,nod2D))
-w_rhs=0.0_WP
-W_n=0.0_WP
+  allocate(auh_elem(nsigma-1,myDim_elem2D+eDim_elem2D+eXDim_elem2D), &
+            w_rhs(nsigma-1,myDim_nod2D+eDim_nod2D))
+  w_rhs=0.0_WP
+  W_n=0.0_WP
  ! ==============
  ! fill mean depth
  ! ==============
 
-  DO elem=1,elem2D
+  do elem=1,myDim_elem2D
     elnodes=elem2D_nodes(:,elem)
     do nz=1,nsigma-1
       delta = 0.5_WP*(sigma(nz) + sigma(nz+1))
-     fD=(depth(elnodes) + eta_n(elnodes))*delta - depth(elnodes)
-     auh_elem(nz,elem)=sum(w_cv(1:4,elem)*fD)*Je(nz,elem)
+      fD=(depth(elnodes) + eta_n(elnodes))*delta - depth(elnodes)
+      auh_elem(nz,elem)=sum(w_cv(1:4,elem)*fD)*Je(nz,elem)
     enddo
- END DO
+  enddo
+
+#ifdef USE_MPI
+  call exchange_elem(auh_elem) !do we need it here ?
+#endif
  ! ==============
  ! internal edges
  ! ==============
- DO ed=1,edge2D_in
+#ifdef USE_MPI
+  edglim=myDim_edge2D+eDim_edge2D
+#else
+  edglim=edge2D_in
+#endif
+  do ed=1,edglim
+#ifdef USE_MPI
+    if (myList_edge2D(ed)>edge2D_in) cycle
+#endif  
     enodes=edge_nodes(:,ed)
     el=edge_tri(:,ed)
-     do nz=1,nsigma-1
-    c1=V_n(nz,el(1))*edge_cross_dxdy(1,ed)-U_n(nz,el(1))*edge_cross_dxdy(2,ed)
-    c2=-V_n(nz,el(2))*edge_cross_dxdy(3,ed)+U_n(nz,el(2))*edge_cross_dxdy(4,ed)
-    c1=c1*auh_elem(nz,el(1)) + c2*auh_elem(nz,el(2))
-    w_rhs(nz,enodes(1))=w_rhs(nz,enodes(1)) + c1
-    w_rhs(nz,enodes(2))=w_rhs(nz,enodes(2)) - c1
-     enddo
- END DO
+    do nz=1,nsigma-1
+      c1=V_n(nz,el(1))*edge_cross_dxdy(1,ed)-U_n(nz,el(1))*edge_cross_dxdy(2,ed)
+      c2=-V_n(nz,el(2))*edge_cross_dxdy(3,ed)+U_n(nz,el(2))*edge_cross_dxdy(4,ed)
+      c1=c1*auh_elem(nz,el(1)) + c2*auh_elem(nz,el(2))
+      w_rhs(nz,enodes(1))=w_rhs(nz,enodes(1)) + c1
+      w_rhs(nz,enodes(2))=w_rhs(nz,enodes(2)) - c1
+    enddo
+  enddo
  ! =============
  ! boundary edges
  ! only the left element (1) is available
  ! =============
-  DO ed=1+edge2D_in, edge2D
+#ifdef USE_MPI 
+  do ed=1, edglim
+    if (myList_edge2D(ed)>edge2D_in) then
+
+      enodes=edge_nodes(:,ed)
+      el1=edge_tri(1,ed)
+      do nz=1,nsigma-1
+        c1=V_n(nz,el1)*edge_cross_dxdy(1,ed)-U_n(nz,el1)*edge_cross_dxdy(2,ed)
+        c1=c1*auh_elem(nz,el1)
+        w_rhs(nz,enodes(1))=w_rhs(nz,enodes(1)) + c1
+        w_rhs(nz,enodes(2))=w_rhs(nz,enodes(2)) - c1
+      enddo
+    end if
+  enddo
+
+  call exchange_nod(w_rhs) !do we need it here ? 95% we do not
+#else
+
+  do ed=1+edge2D_in, edge2D
     enodes=edge_nodes(:,ed)
     el1=edge_tri(1,ed)
     do nz=1,nsigma-1
-    c1=V_n(nz,el1)*edge_cross_dxdy(1,ed)-U_n(nz,el1)*edge_cross_dxdy(2,ed)
-    c1=c1*auh_elem(nz,el1)
-    w_rhs(nz,enodes(1))=w_rhs(nz,enodes(1)) + c1
-    w_rhs(nz,enodes(2))=w_rhs(nz,enodes(2)) - c1
+      c1=V_n(nz,el1)*edge_cross_dxdy(1,ed)-U_n(nz,el1)*edge_cross_dxdy(2,ed)
+      c1=c1*auh_elem(nz,el1)
+      w_rhs(nz,enodes(1))=w_rhs(nz,enodes(1)) + c1
+      w_rhs(nz,enodes(2))=w_rhs(nz,enodes(2)) - c1
     enddo
- END DO
+  enddo
+#endif
+
 !++++++++++++++++++++++++++++++++++
 ! cartesian vertical velocity
 !++++++++++++++++++++++++++++++++++
-  do n=1,nod2D
-   a = depth(n) + eta_n(n)
-   b = depth(n) + eta_p(n)
-   if (a <= Dmin) wad_nodes = 0.0_WP
-   if (a > Dmin)   wad_nodes = 1.0_WP
-   do nz=1,nsigma-1
-    delta = 0.5_WP*(sigma(nz) + sigma(nz+1))
-    c1 = a*delta - depth(n)
-    c2 = b*delta - depth(n)
-   if (index_nod2D(n) /= 2) W_n(nz,n)=wad_nodes*((c1*Jc(nz,n)-c2*Jc_old(nz,n))/dt +&
+  do n=1,myDim_nod2D
+    a = depth(n) + eta_n(n)
+    b = depth(n) + eta_p(n)
+    if (a <= Dmin) wad_nodes = 0.0_WP
+    if (a > Dmin)   wad_nodes = 1.0_WP
+    do nz=1,nsigma-1
+      delta = 0.5_WP*(sigma(nz) + sigma(nz+1))
+      c1 = a*delta - depth(n)
+      c2 = b*delta - depth(n)
+      if (index_nod2D(n) /= 2) W_n(nz,n)=wad_nodes*((c1*Jc(nz,n)-c2*Jc_old(nz,n))/dt +&
                                                        w_rhs(nz,n)/area(n) + &
                                                        (Wvel(nz,n) - Wvel(nz+1,n))*c1)/Jc(nz,n)
-   enddo
-  ENDDO
-deallocate(auh_elem, w_rhs)
+    enddo
+  enddo
+  call exchange_nod(W_n) !do we need it here ? 95% we do not
 
- end subroutine vert_vel_cart
+  deallocate(auh_elem, w_rhs)
+
+end subroutine vert_vel_cart
 !==========================================================================
 subroutine compute_vortex_3D
   use o_MESH
