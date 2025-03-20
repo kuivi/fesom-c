@@ -2,4 +2,4 @@
 *.mod
 Makefile.in
 *.exe
-
+*.o

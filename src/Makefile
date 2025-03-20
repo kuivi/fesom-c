@@ -4,8 +4,8 @@ include Makefile.in
 
 .SUFFIXES: .F90 .o
 
-LIBS = $(GOTMLIB)  $(NETCDFLIB) $(PNETCDFLIB)
-INCS = $(GOTMINCS) $(NETCDFINC) $(PNETCDFINC)
+LIBS =  $(NETCDFLIB) $(PNETCDFLIB)
+INCS =  $(NETCDFINC) $(PNETCDFINC)
 
 OBJECTS= fv_var.o                  \
       gen_modules_partitioning_c.o \
