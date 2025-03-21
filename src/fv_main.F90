@@ -1999,6 +1999,7 @@ SUBROUTINE oce_timestep
 
      !$ if (iverbosity >= 3) t7=omp_get_wtime()
      call vert_vel_sigma
+     call vert_vel_cart
 
 !$OMP END PARALLEL
 
@@ -2111,6 +2112,8 @@ SUBROUTINE oce_timestep
 
      !$ if (iverbosity >= 3) t8=omp_get_wtime()
      call vert_vel_sigma
+     call vert_vel_cart
+
 !#ifdef USE_MPI
 ! t_9 = MPI_Wtime()
 !#endif
