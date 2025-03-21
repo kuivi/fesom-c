@@ -61,6 +61,11 @@ PROGRAM MAIN
 
   character(len = 256) :: fname,tmpstr ! file name
 
+  real(kind=WP), allocatable, dimension(:)  :: ac_buff ! used to read and distribute ac from file
+  integer, allocatable, dimension(:) :: mapping_main
+  integer                            :: iofs  
+
+
   SHnc = .FALSE.
   enable_output_main_switch = .TRUE.
 
@@ -234,19 +239,58 @@ PROGRAM MAIN
   if (nobn>0) then
     allocate(X1obn(nobn),X2obn(nobn),in_obn(nobn))
 
-    if ((SL_obn).and.(.not.(SL_obn_user_def))) then
-
-        if (mype==0) call ac_create_Xobn
+    if (mype==0) call ac_create_Xobn ! get X1obn,X2obn,in_obn
 
         !call MPI_BARRIER(MPI_COMM_FESOM_C,ierror)
         call MPI_BCast(X1obn,nobn,MPI_DOUBLE_PRECISION, 0, MPI_COMM_FESOM_C, ierror)
         call MPI_BCast(X2obn,nobn,MPI_DOUBLE_PRECISION, 0, MPI_COMM_FESOM_C, ierror)
         call MPI_BCast(in_obn,nobn,MPI_INTEGER, 0, MPI_COMM_FESOM_C, ierror)
+
+    if ((SL_obn)) then
+      if (.not.(SL_obn_user_def)) then
         call ac_create(ac)
+      else
+        !read ac from file
+        ! allocate buffer and mapping for ac read
+        allocate(ac_buff(nod2D))        
+        allocate(mapping_main(nod2D))
+        mapping_main(:)=0
+        ac_buff(:)=0
+        do n=1, myDim_nod2D+eDim_nod2D
+           iofs=myList_nod2D(n)
+           mapping_main(iofs)=n
+        end do        
+        if (mype==0) then
+          write(*,*) "Read ac from ",trim(meshpath)//'ac.out'
+          open(78,file=trim(meshpath)//'ac.out', status='old')
+          do n=1,nod2D
+              read(78,*) ac_buff(n)
+          enddo
+          close(78)
+        endif  
+        call MPI_BCast(ac_buff, nod2D, MPI_DOUBLE_PRECISION, 0, MPI_COMM_FESOM_C, ierror)
+        do n=1,nod2D
+            if (mapping_main(n)>0) then
+                ac(mapping_main(n))=ac_buff(n)
+            end if
+        end do          
+        deallocate(ac_buff)
+        deallocate(mapping_main)
+      endif  
+
         call exchange_nod(ac)
+      call MPI_AllREDUCE(maxval(ac),mx_eta, 1, MPI_DOUBLE_PRECISION, MPI_MAX, &
+      MPI_COMM_FESOM_C, MPIerr)
+      call MPI_AllREDUCE(minval(ac),mn_eta, 1, MPI_DOUBLE_PRECISION, MPI_MIN, &
+      MPI_COMM_FESOM_C, MPIerr)
+      if (mype==0) print *,'AC max/min values:',mx_eta,mn_eta
         if (mype==0) print *,'AC values (open boundaries) are set.'
     end if
 
+!    if (mype==0) then
+!      write(*,*) "nobn=",nobn,"in_obn=",in_obn
+!    endif        
+!    write(*,*) "mype=",mype,"mynobn=",mynobn,"nobn=",nobn
     if (mynobn>0) then
      ind=0
      do n=1,myDim_nod2D
@@ -508,6 +552,11 @@ close(22)
      ! ouput only for control
      !=======================
 
+    call energy(eout)
+
+    if (mype==0) then
+      write(53,'(4e16.7)') time/86400.0_WP-time_jd0,eout
+    endif  
 
      if ( enable_output_main_switch .AND. mod(n_dt,IREP)==0 ) then
 
@@ -611,12 +660,12 @@ close(22)
         end if
         endif
 
-        call energy(eout)
+        !call energy(eout)
 
         if (mype==0) then
            print *,'Energy ENERGY ENERGY : ',eout
            write(*,*) "icedyn_tmask = ",icedyn_tmask
-           write(53,'(4e16.7)') time/86400.0_WP-time_jd0,eout
+           !write(53,'(4e16.7)') time/86400.0_WP-time_jd0,eout
            if (iverbosity >= 1) then
               write(*,*) 'time= ',time/86400.0_WP-time_jd0,'time_all= ',time/86400.0_WP-time_jd0
               write(*,*)  ' energy= ',eout

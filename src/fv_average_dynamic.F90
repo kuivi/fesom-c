@@ -202,11 +202,11 @@
            ssh_rhs(n) = ssh_rhs(n)+amp_factor(j)*ampt(q,j)&
               *cos((time_2D-time_jd0*86400.0_WP)*2.0_WP*pi/(Harmonics_tf_period(j)*3600._WP) - (fazt(q,j)+phy_factor(j)))
         end do
-        if (.not. restart) then
-            if (time_jd-time_jd0<10.0_WP) then
-            ssh_rhs(n)=ssh_rhs(n)*(time_jd-time_jd0)/10.0_WP
-            end if
-        endif
+!        if (.not. restart) then
+!            if (time_jd-time_jd0<10.0_WP) then
+!            ssh_rhs(n)=ssh_rhs(n)*(time_jd-time_jd0)/10.0_WP
+!            end if
+!        endif
      enddo
 !!$OMP END DO
 !!$OMP END PARALLEL
@@ -547,7 +547,8 @@ subroutine energy(eout)
 
 !VF, per unit area to whole area
 
-   eout=eout_sum/ttl_area    ! Energy for area
+   !eout=eout_sum/ttl_area    ! Energy for area
+   eout=eout_sum
 
 deallocate(rbuffer, ekin)
 
