@@ -362,15 +362,26 @@ SUBROUTINE vert_vel_sigma
 
      el=edge_tri(:,ed)
 
-     do nz=1,nsigma-1
+     if (key_solver) then
+      do nz=1,nsigma-1
+         c1(nz) = Je(nz,el(1)) * (                  &
+              V_n(nz,el(1))*edge_cross_dxdy(1,ed) &
+              -U_n(nz,el(1))*edge_cross_dxdy(2,ed))&
+              + Je(nz,el(2)) * (                    &
+              -V_n(nz,el(2))*edge_cross_dxdy(3,ed) &
+              +U_n(nz,el(2))*edge_cross_dxdy(4,ed))
+      enddo
+     else     
+      do nz=1,nsigma-1
 
-        c1(nz) = Je(nz,el(1)) * (                                          &
-             (V_n_filt(nz,el(1)) - V_filt_2D(el(1)))*edge_cross_dxdy(1,ed) &
-             -(U_n_filt(nz,el(1)) - U_filt_2D(el(1)))*edge_cross_dxdy(2,ed))&
-             + Je(nz,el(2)) * (                                       &
-             -(V_n_filt(nz,el(2)) - V_filt_2D(el(2)))*edge_cross_dxdy(3,ed) &
-             +(U_n_filt(nz,el(2)) - U_filt_2D(el(2)))*edge_cross_dxdy(4,ed))
-     enddo
+          c1(nz) = Je(nz,el(1)) * (                                          &
+              (V_n_filt(nz,el(1)) - V_filt_2D(el(1)))*edge_cross_dxdy(1,ed) &
+              -(U_n_filt(nz,el(1)) - U_filt_2D(el(1)))*edge_cross_dxdy(2,ed))&
+              + Je(nz,el(2)) * (                                       &
+              -(V_n_filt(nz,el(2)) - V_filt_2D(el(2)))*edge_cross_dxdy(3,ed) &
+              +(U_n_filt(nz,el(2)) - U_filt_2D(el(2)))*edge_cross_dxdy(4,ed))
+      enddo
+     endif
 
      !$ if (edge_nodes(1,ed) >= me_nod1 .and. edge_nodes(1,ed)<= me_nod2 ) then
      Wvel(1:nsigma-1,edge_nodes(1,ed)) = Wvel(1:nsigma-1,edge_nodes(1,ed)) + c1(1:nsigma-1)
@@ -397,12 +408,19 @@ SUBROUTINE vert_vel_sigma
         !$  .or.(edge_nodes(2,ed) >= me_nod1 .and. edge_nodes(2,ed)<= me_nod2 ) ) then
 
         el1=edge_tri(1,ed)
-
-        do nz=1,nsigma-1
-           c1(nz) = Je(nz,el1)*                           &
+        if (key_solver) then
+          do nz=1,nsigma-1
+             c1(nz) = Je(nz,el1)*                           &
+                  (V_n(nz,el1)*edge_cross_dxdy(1,ed) &
+                  -U_n(nz,el1)*edge_cross_dxdy(2,ed))
+          enddo
+        else
+          do nz=1,nsigma-1
+             c1(nz) = Je(nz,el1)*                           &
                 ((V_n_filt(nz,el1) - V_filt_2D(el1))*edge_cross_dxdy(1,ed) &
                 -(U_n_filt(nz,el1) - U_filt_2D(el1))*edge_cross_dxdy(2,ed))
-        enddo
+          enddo
+        endif  
         !$ if (edge_nodes(1,ed) >= me_nod1 .and. edge_nodes(1,ed)<= me_nod2 ) then
         Wvel(1:nsigma-1,edge_nodes(1,ed)) = Wvel(1:nsigma-1,edge_nodes(1,ed)) + c1(1:nsigma-1)
         !$ end if
@@ -421,12 +439,19 @@ SUBROUTINE vert_vel_sigma
      !$  .or.(edge_nodes(2,ed) >= me_nod1 .and. edge_nodes(2,ed)<= me_nod2 ) ) then
 
      el1=edge_tri(1,ed)
-
-     do nz=1,nsigma-1
+     if (key_solver) then
+      do nz=1,nsigma-1
+         c1(nz) = Je(nz,el1)*                           &
+              (V_n(nz,el1)*edge_cross_dxdy(1,ed) &
+              -U_n(nz,el1)*edge_cross_dxdy(2,ed))
+      enddo
+     else
+       do nz=1,nsigma-1
         c1(nz) = Je(nz,el1)*                           &
              ((V_n_filt(nz,el1) - V_filt_2D(el1))*edge_cross_dxdy(1,ed) &
              -(U_n_filt(nz,el1) - U_filt_2D(el1))*edge_cross_dxdy(2,ed))
-     enddo
+       enddo
+     endif  
      !$ if (edge_nodes(1,ed) >= me_nod1 .and. edge_nodes(1,ed)<= me_nod2 ) then
      Wvel(1:nsigma-1,edge_nodes(1,ed)) = Wvel(1:nsigma-1,edge_nodes(1,ed)) + c1(1:nsigma-1)
      !$ end if

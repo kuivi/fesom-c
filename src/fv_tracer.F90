@@ -470,9 +470,13 @@ SUBROUTINE solve_tracer_upwind(ttf, ttfold, stf, stfold)
 
      DO nz=1, nsigma-1
 
-        c1 =   V_n_filt(nz,el1)*edge_cross_dxdy(1,ed) - U_n_filt(nz,el1)*edge_cross_dxdy(2,ed)
-        c2 = - V_n_filt(nz,el2)*edge_cross_dxdy(3,ed) + U_n_filt(nz,el2)*edge_cross_dxdy(4,ed)
-
+        if (key_solver) then
+         c1 =   V_n(nz,el1)*edge_cross_dxdy(1,ed) - U_n(nz,el1)*edge_cross_dxdy(2,ed)
+         c2 = - V_n(nz,el2)*edge_cross_dxdy(3,ed) + U_n(nz,el2)*edge_cross_dxdy(4,ed)
+        else
+         c1 =   V_n_filt(nz,el1)*edge_cross_dxdy(1,ed) - U_n_filt(nz,el1)*edge_cross_dxdy(2,ed)
+         c2 = - V_n_filt(nz,el2)*edge_cross_dxdy(3,ed) + U_n_filt(nz,el2)*edge_cross_dxdy(4,ed)
+        endif
         aux_c(nz) = Je(nz,el1)*c1 + Je(nz,el2)*c2
 
         if (c1 > 0._WP .and. c2 > 0._WP ) then
@@ -528,7 +532,11 @@ SUBROUTINE solve_tracer_upwind(ttf, ttfold, stf, stfold)
            ! ============
            ! Average diffusive flux
            ! ============
-           c1 =   V_n_filt(nz,el1)*edge_cross_dxdy(1,ed) - U_n_filt(nz,el1)*edge_cross_dxdy(2,ed)
+           if (key_solver) then
+              c1 =   V_n(nz,el1)*edge_cross_dxdy(1,ed) - U_n(nz,el1)*edge_cross_dxdy(2,ed)
+           else
+              c1 =   V_n_filt(nz,el1)*edge_cross_dxdy(1,ed) - U_n_filt(nz,el1)*edge_cross_dxdy(2,ed)
+           endif
            aux_c(nz) = Je(nz,el1)*c1
 
            ! ============
@@ -577,7 +585,11 @@ SUBROUTINE solve_tracer_upwind(ttf, ttfold, stf, stfold)
         ! ============
         ! Average diffusive flux
         ! ============
-        c1 =   V_n_filt(nz,el1)*edge_cross_dxdy(1,ed) - U_n_filt(nz,el1)*edge_cross_dxdy(2,ed)
+        if (key_solver) then
+            c1 =   V_n(nz,el1)*edge_cross_dxdy(1,ed) - U_n(nz,el1)*edge_cross_dxdy(2,ed)
+        else
+            c1 =   V_n_filt(nz,el1)*edge_cross_dxdy(1,ed) - U_n_filt(nz,el1)*edge_cross_dxdy(2,ed)
+        endif        
         aux_c(nz) = Je(nz,el1)*c1
 
         ! ============
@@ -848,8 +860,11 @@ SUBROUTINE solve_tracer_upwind(ttf, ttfold, stf, stfold)
 
            dmean = max(Dmin, 0.5_WP*(eta_n(nod1)+depth(nod1) + eta_n(nod2)+depth(nod2)))
 
-           un1 = (V_filt_2D(el1)*edge_cross_dxdy(1,ed)- U_filt_2D(el1)*edge_cross_dxdy(2,ed))*dmean
-
+           if (key_solver) then
+               un1 = U_n_2D(2,el1)*edge_cross_dxdy(1,ed)- U_n_2D(1,el1)*edge_cross_dxdy(2,ed)
+           else
+               un1 = (V_filt_2D(el1)*edge_cross_dxdy(1,ed)- U_filt_2D(el1)*edge_cross_dxdy(2,ed))*dmean
+           endif
            Vel_nor(nod1) = Vel_nor(nod1) + un1/area(nod1)
            Vel_nor(nod2) = Vel_nor(nod2) - un1/area(nod2)
 
@@ -858,7 +873,9 @@ SUBROUTINE solve_tracer_upwind(ttf, ttfold, stf, stfold)
      END DO
 
 #else
-
+   if (key_solver) then
+      STOP "Error, boundary in nonMPI, fv_tracer (change to 2D velocity)"
+   endif
      DO ed = 1+edge2D_in, edge2D
         nod1 = edge_nodes(1,ed)
         nod2 = edge_nodes(2,ed)

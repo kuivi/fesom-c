@@ -1097,7 +1097,7 @@ SUBROUTINE array_setup
     allocate(eta_tmp(node_size))
     eta_tmp=0.0_WP
   endif
-      
+
   allocate(taux(elem_size), tauy(elem_size))
   allocate(taux_node(node_size), tauy_node(node_size))
   taux=0.0_WP
@@ -2676,8 +2676,9 @@ SUBROUTINE oce_timestep
   IMPLICIT NONE
 
   real(kind=WP)      :: t_0,t_1, t_2, t_3, t_4, t_5, t_6, t_7, t_8, t_9, t_10
+  real(kind=WP)      :: a
 
-  integer                :: tracer_sch, n, nz
+  integer            :: tracer_sch, n, nz, el
 
 
 !aa13.02.20  print *,mype,'oce_timestep started!'
@@ -2690,7 +2691,16 @@ SUBROUTINE oce_timestep
   case(1)
 
 !!$     !$ if (iverbosity >= 3) t1=omp_get_wtime()
-     call oce_barotropic_timestep
+    if (key_solver) then
+      STOP 'no 2D solution for parms!'
+      !==================
+      !  compute ssh_rhs
+      !==================
+      call compute_ssh_rhs
+      call timestep_AB3
+   else
+      call oce_barotropic_timestep
+   endif
 
 !!$     !$ if (iverbosity >= 3) then
 !!$     !$    t2=omp_get_wtime()
@@ -2724,21 +2734,42 @@ SUBROUTINE oce_timestep
      !$ if (iverbosity >= 3) t3=omp_get_wtime()
 
      call compute_vel_rhs
-
+     if (key_solver) then
+        !==================
+        !  compute ssh_rhs
+        !==================
+        call compute_ssh_rhs
+        call timestep_AB3
+     else
+        call oce_barotropic_timestep
+     endif
      !$ if (iverbosity >= 3) t4=omp_get_wtime()
-     call oce_barotropic_timestep
+     !call oce_barotropic_timestep
      !$ if (iverbosity >= 3) t5=omp_get_wtime()
 
 !$OMP PARALLEL
      call jacobian
 
      !$ if (iverbosity >= 3) t6=omp_get_wtime()
-     call update_3D_vel
-
+     if (key_solver) then
+       call update_vel
+     else
+       call update_3D_vel
+     endif
      !$ if (iverbosity >= 3) t7=omp_get_wtime()
      call vert_vel_sigma
      call vert_vel_cart
 
+     if (key_solver) then
+      !interpolation
+      do el=1,myDim_elem2D
+         U_n_2D(1,el) = sum(U_n(1:nsigma-1,el)*Je(1:nsigma-1,el))
+         U_n_2D(2,el) = sum(V_n(1:nsigma-1,el)*Je(1:nsigma-1,el))
+         a = sum(Je(1:nsigma-1,el))
+         U_n_2D(1,el) = U_n_2D(1,el)/a
+         U_n_2D(2,el) = U_n_2D(2,el)/a
+      enddo
+     endif 
 !$OMP END PARALLEL
 
      !$ if (iverbosity >= 3) then
