@@ -149,6 +149,7 @@ logical                      :: key_ic         ! switch ON or OFF module for int
 integer                      :: type_swr_body               !R-percent of the flux associated with the longer wavelength irradiance
                                                            ! See also Simpson and Dickey (1981)
 logical                      :: key_nc_output  ! switch ON or OFF netCDF output
+
 !++++++++++++++++++++++++++++++
 ! SBC, atmosphere forcing
 !++++++++++++++++++++++++++++++
@@ -237,6 +238,7 @@ logical                      :: salinity_on
 logical                      :: temp_on
 logical                      :: wet_dry_on
 logical                      :: key_rivers
+logical                      :: key_solver=.false.        ! switch ON or OFF solver for 3D
 CHARACTER (LEN=80)           :: title
 logical                      :: Coriolis_TF
 real(kind=WP)                :: lat_cartesian
@@ -378,7 +380,7 @@ real(kind=WP), allocatable    :: U_n_2D(:,:), U_n_1(:,:), U_n_2(:,:), UAB(:,:)
 real(kind=WP), allocatable    :: U_rhs_2D(:,:)  !NR , U_n_2D_old(:,:)  !NR not used
 real(kind=WP), allocatable    :: UV_rhs(:,:,:), UV2_rhs(:,:)
 ! ssh
-real(kind=WP), allocatable    :: eta_n(:), eta_n_1(:), eta_n_2(:), etaAB(:)
+real(kind=WP), allocatable    :: eta_n(:), eta_n_1(:), eta_n_2(:), etaAB(:), eta_tmp(:)
 real(kind=WP), allocatable    :: ssh_rhs(:), relax_coef(:), ssh_gp(:)
 real(KIND=WP), allocatable    :: vel_grad(:,:), taux(:), tauy(:), taux_node(:), tauy_node(:)
 real(KIND=WP), allocatable    :: windx(:), windy(:), wind(:) ! wind at 10 m in X and Y directions and abs
@@ -434,6 +436,21 @@ real(wp), allocatable, dimension(:)   :: runoff_rivers ! rivers runoff data for 
 real(kind=WP), allocatable    :: qbu(:), qbv(:)
 real(kind=WP), allocatable    :: hama_v(:), E_sed(:), h_var(:), h_var_old(:)
 real(kind=WP), allocatable    :: con(:), con_bc(:), Er_Dep(:), h_var2(:), h_var_old2(:), qb(:,:)
+
+!+++++++++++++++++++++++
+!sparse Matrix, used by implicit scheme
+!+++++++++++++++++++++++
+type sparse_matrix
+    integer                                   :: dim
+    integer                                   :: nza
+    integer, allocatable, dimension(:) :: colind
+    integer, allocatable, dimension(:) :: rowptr
+    real(kind=WP),allocatable, dimension(:)   :: values
+    integer, allocatable, dimension(:) :: colind_loc
+    integer, allocatable, dimension(:) :: rowptr_loc
+end type sparse_matrix
+
+type(sparse_matrix)                           :: ssh_stiff
 
 END MODULE o_ARRAYS
 !

@@ -378,6 +378,13 @@ close(22)
   !Read restart (after allocation in initialization of ice ...)
   ! sbc,obc,rivers should be after restart
   if(restart) call read_restart_separate
+  ! inizialization of
+
+  if (key_solver) then
+    ! initialization stiff matrix for solver
+    ! should be done after defining open boundary and all scales...
+    call init_stiff_mat
+  endif
   !=================================
   ! inizialization of ocean forcing
   !=================================
@@ -1086,6 +1093,11 @@ SUBROUTINE array_setup
   vel_grad=0.0_WP
   ssh_gp=0.0_WP
 
+  if (key_solver) then
+    allocate(eta_tmp(node_size))
+    eta_tmp=0.0_WP
+  endif
+      
   allocate(taux(elem_size), tauy(elem_size))
   allocate(taux_node(node_size), tauy_node(node_size))
   taux=0.0_WP
@@ -1752,6 +1764,732 @@ SUBROUTINE oce_barotropic_timestep
 end subroutine oce_barotropic_timestep
 
 !===================================================================================
+!========================
+!===================================================================================
+subroutine init_stiff_mat
+  !#########################################################################!
+  ! adopted from Kuznetsov et. al 2024
+  ! Ivan(2020)  : rewrite from Felix version and from new FESOM2 version. rewritten for MPI
+  ! Felix(2017?): allocate and initiate the sparse stiff matrix. Mostly taken from oce_dyn.F90 (FESOM2)
+  ! from Felix:
+  ! dim:  the dimension of the (square) matrix or the number of nodes in the mesh
+  ! nza:  number of non zero arguments in the matrix
+  ! values:       contains the values of the matrix. They are ordered by rows in
+  !               ascending order, which means first are all values from the first
+  !               row, then from the second and so on. The information of the
+  !               position in the matrix is stored in rowptr and colind
+  ! rowptr:       contains the indices of the first values belonging to each row.
+  !               For example: ssh_stiff%rowptr(10)=20 means that the 20-th entry
+  !               in ssh_stiff%values is the first, which belongs to the 10-th row
+  !               of the matrix
+  ! colind:       contains the indices of the columns to which the entries belong.
+  !               For example: ssh_stiff%colind(20)=11 means that
+  !               ssh_stiff%values(20) stands in the 11-th column
+  ! Using this example, the value from ssh_stiff%values(20), let it be one is
+  ! standing in the 10-th row and the 11-th column
+  ! Stiffness matrix for the elevation
+  ! from FESOM2:
+  ! We first use local numbering and assemble the matrix
+  ! Having completed this step we substitute global contiguous numbers.
+  !
+  ! Our colind cannot be used to access local node neighbors
+  ! This is a reminder from FESOM
+  !        do q=1, nghbr_nod2D(row)%nmb
+  !           col_pos(nghbr_nod2D(row)%addresses(q)) = q
+  !        enddo
+  !       ipos=sshstiff%rowptr(row)+col_pos(col)-sshstiff%rowptr(1)
+  !
+  ! To achive it we should use global arrays n_num and n_pos.
+  ! Reserved for future.
+  
+      use o_ARRAYS
+      use o_PARAM
+      use o_MESH
+      use g_PARSUP
+      use g_comm_auto
+  
+  implicit none
+  
+      integer                              :: n, n1, n2, nend, nini, m, fileID, offset, output_alloc, ed
+      integer                              :: i, elem, el(2), elnodes(4), row, npos(4), nns(20), j
+      integer, allocatable, dimension(:)   :: n_count
+      integer, allocatable, dimension(:,:) :: n_pos
+      integer, allocatable                 :: pnza(:), rpnza(:)
+      integer, allocatable                 :: mapping(:)
+      character*10                         :: npes_string
+      character*1000                       :: dist_mesh_dir, file_name
+      integer :: ierror
+      real(kind=WP)                       :: factor, fy(4), elem_depth
+  
+      integer, parameter :: maxneighbor=16
+  
+      if (mype==0) then
+          write(*,*) '____________________________________________________________'
+          write(*,*) ' --> initialise ssh operator using unperturbed ocean depth'
+          write(*,*) ' nod2D=',nod2D
+      endif
+      !___________________________________________________________________________
+      ! a) pre allocate stiff_mat: dimension,  reduced row vector ... and number
+      ! of neighbors and indices of neighbors
+      ssh_stiff%nza = 0
+      ssh_stiff%dim=nod2D
+      allocate(ssh_stiff%rowptr(myDim_nod2D+1))
+      allocate(ssh_stiff%rowptr_loc(myDim_nod2D+1))
+      ssh_stiff%rowptr=0
+      ssh_stiff%rowptr_loc=0
+      ssh_stiff%rowptr_loc(1)=1
+      ssh_stiff%rowptr(1)=1
+  
+  !    allocate(n_pos(maxneighbor,myDim_nod2D))
+  
+      ! allocate nn_pos here. We will use it later during filling. (FESOM2 has it in oce_mscl_adv -- WTF?)
+      ! it works only for MPI, for serial it is defined in find_edge . inconsistency...
+  !    allocate(nn_pos(maxneighbor,myDim_nod2D))
+      ! the number 16 should be the maximum of neighbor nodes, maybe it has to be
+      ! computed. At the moment 8 should be enough
+  !    n_pos=0
+  !    n_num=0
+      !___________________________________________________________________________
+      ! new version from S. Danilov for quads
+      ! b) Neighbourhood information
+      allocate(nn_num(myDim_nod2D), n_count(myDim_nod2D+eDim_nod2D))
+      nn_num=0
+      n_count=0
+      nns=0
+        ! ====
+        ! Count neighbor vertices
+        ! ====
+      do n=1, myDim_nod2D
+          do j=1, nod_in_elem2D_num(n)
+              elem=nod_in_elem2D(j,n)
+              elnodes=elem2D_nodes(:,elem)
+              do i=1,4
+                  !if(elnodes(i)>myDim_nod2D) cycle
+                  if (n_count(elnodes(i))==0) then ! not counted yet
+                      nn_num(n)=nn_num(n)+1
+                      nns(nn_num(n))=elnodes(i)
+                      n_count(elnodes(i))=1
+                  end if
+              end do
+          end do
+          ! if((nn_num(n).ne.6).and.(nn_num(n).ne.9)) &
+          ! write(*,*) '#######Problem', nn_num(n), nod_in_elem2D_num(n), nod_in_elem2d(:,n)
+          n_count(nns(1:nn_num(n)))=0
+      end do
+      deallocate(n_count)
+      n=maxval(nn_num)
+      allocate(nn_pos(n,myDim_nod2D), n_count(myDim_nod2D+eDim_nod2D))
+      nn_pos=0
+      nn_num=0
+      n_count=0
+      ! ====
+      ! Now fill in repeating the computations
+      ! ====
+      do n=1,myDim_nod2d
+          nn_num(n)=1
+          nn_pos(1,n)=n
+      end do
+      do n=1, myDim_nod2D
+          n_count(n)=1           ! n is already entered, mark it as counted
+          do j=1, nod_in_elem2D_num(n)
+              elem=nod_in_elem2D(j,n)
+              elnodes=elem2D_nodes(:,elem)
+              do i=1,4
+                  !if(elnodes(i)>myDim_nod2D) cycle
+                  if (n_count(elnodes(i))==0) then ! not counted yet
+                      nn_num(n)=nn_num(n)+1
+                      nn_pos(nn_num(n),n)=elnodes(i)
+                      n_count(elnodes(i))=1
+                  end if
+              end do
+          end do
+          n_count(nn_pos(1:nn_num(n),n))=0
+      end do
+      deallocate(n_count)
+      ! nn_num contains the number of neighbors
+      ! nn_pos -- their indices
+  
+      !___________________________________________________________________________
+      ! c) fill up reduced row vector: indices entry where sparse entrys switch to
+      ! next row, remember ssh_stiff%rowptr(1) is initialised with on and
+      ! ssh_stiff%rowptr is allocated with a length of myDim_nod2D+1
+      do n=1,myDim_nod2D
+          ssh_stiff%rowptr(n+1) = ssh_stiff%rowptr(n)+nn_num(n)
+      end do
+      !___________________________________________________________________________
+      ! d) how many nonzero entries sparse matrix has? --> Corresponds to last
+      ! entry in ssh_stiff%rowptr with index myDim_nod2D+1 minus 1
+      ssh_stiff%nza = ssh_stiff%rowptr(myDim_nod2D+1)-1
+  
+      ! allocate column as colind value array of sparse matrix, have length of nonzero
+      ! entrie of sparse matrix
+      allocate(ssh_stiff%colind(ssh_stiff%nza), ssh_stiff%colind_loc(ssh_stiff%nza), STAT=output_alloc )
+      if( output_alloc /= 0 )   STOP 'output_ini: failed to allocate arrays'
+      ssh_stiff%colind = 0
+      ssh_stiff%colind_loc = 0
+      allocate(ssh_stiff%values(ssh_stiff%nza), STAT=output_alloc )
+      if( output_alloc /= 0 )   STOP 'output_ini: failed to allocate arrays'
+      ssh_stiff%values=0.0_WP
+      !___________________________________________________________________________
+      ! e) fill up sparse matrix column index
+      do n=1,myDim_nod2D
+          ! for every node points n, estimate start (nini) and end (nend) indices of neighbouring nodes
+          ! in sparse matrix
+          nini = ssh_stiff%rowptr(n)
+          nend = ssh_stiff%rowptr(n+1)- 1
+          ! fill colind with local indices location from nn_pos
+          ssh_stiff%colind(nini:nend) = nn_pos(1:nn_num(n),n)
+      end do
+      ssh_stiff%colind_loc=ssh_stiff%colind
+      ssh_stiff%rowptr_loc=ssh_stiff%rowptr
+  
+      !!! Thus far everything is in local numbering.    !!!
+      !!! We will update it later when the values are   !!!
+      !!! filled in
+  
+      !___________________________________________________________________________
+      ! f) fill in  M/dt-alpha*theta*g*dt*\nabla(H\nabla\eta))
+  
+       !we do not need to fill it now in this version (will be filled later in fill subroutine)
+  !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+  !***************************** why ERROR during deallocation ????????????????????
+      !deallocate(n_pos,n_num)
+  !*************************************************************
+      !___________________________________________________________________________
+      ! g) Global contiguous numbers:
+      ! Now we need to exchange between PE to know their
+      ! numbers of non-zero entries (nza):
+      allocate(pnza(npes), rpnza(npes))
+      pnza(1:npes)=0
+      rpnza=0
+      ! number of nonzero entries at every CPU
+      pnza(mype+1)=ssh_stiff%nza
+      call MPI_Barrier(MPI_COMM_FESOM_C,MPIerr)
+      !collect this number from all CPUs into rpnza
+      call MPI_AllREDUCE( pnza, rpnza, &
+          npes, MPI_INTEGER,MPI_SUM, &
+          MPI_COMM_FESOM_C, MPIerr)
+      call MPI_Barrier(MPI_COMM_FESOM_C,MPIerr)
+      if (mype==0) then
+          offset=0
+      else
+          ! calculate offset for all cpus mype~=0
+          offset=sum(rpnza(1:mype))  ! This is offset for mype
+      end if
+      !--> make sparse matrix row pointers from local to global by nonzero entries
+      !    offset
+      ssh_stiff%rowptr=ssh_stiff%rowptr+offset   ! pointers are global
+      !___________________________________________________________________________
+      ! replace local nza with a global one
+      ssh_stiff%nza=sum(rpnza(1:npes))
+      deallocate(rpnza, pnza)
+      !___________________________________________________________________________
+      ! colindices are now local to PE. We need to make them local contiguous
+      ! (i) global natural:
+      do n=1,ssh_stiff%rowptr(myDim_nod2D+1)-ssh_stiff%rowptr(1)
+          ! myList_nod2D ... contains global node index of every meshpoit that belongs
+          ! to a CPU
+          ! ssh_stiff%colind(n) ... contains local node index (1:myDim_nod2d)
+          ! myList_nod2D(ssh_stiff%colind(n))  ... converts local index to global index
+          ssh_stiff%colind(n)=myList_nod2D(ssh_stiff%colind(n))
+      end do
+      !___________________________________________________________________________
+      allocate(mapping(nod2D))
+      ! 0 proc reads the data in chunks and distributes it between other procs
+      write(npes_string,"(I10)") npes
+      dist_mesh_dir=trim(meshpath)//'dist_'//trim(ADJUSTL(npes_string))//'/'
+      file_name=trim(dist_mesh_dir)//'rpart.out'
+      fileID=10
+      if (mype==0) then
+          write(*,*) '     > in init_stiff_mat, reading ', trim(file_name)
+          open(fileID, file=trim(file_name))
+          ! n ... how many cpus
+          read(fileID, *) n
+          ! 1st part of rpart.out: mapping(1:npes) = how many 2d node points owns every CPU
+          read(fileID, *) mapping(1:npes)
+          ! 2nd part of rpart.out: mapping for contigous numbering of how the 2d mesh points are
+          ! locate on the CPUs: e.g node point 1, lies on CPU 2 and is there the 5th node point.
+          ! If CPU1 owns in total 5000 node points that is the mapping for the node point 1 =5005
+          read(fileID, *) mapping
+          close(fileID)
+      end if
+      call MPI_BCast(mapping, nod2D, MPI_INTEGER, 0, MPI_COMM_FESOM_C, ierror)
+      !___________________________________________________________________________
+      ! (ii) global PE contiguous:
+      do n=1,ssh_stiff%rowptr(myDim_nod2D+1)-ssh_stiff%rowptr(1)
+          ! convert global mesh node point numbering to global numbering of how the single
+          ! node points are contigous located on the CPUs
+          ssh_stiff%colind(n)=mapping(ssh_stiff%colind(n))
+      end do
+  
+      !___________________________________________________________________________
+      deallocate(mapping)
+  
+  end subroutine init_stiff_mat
+
+
+  subroutine timestep_AB3
+    ! compute ssh ("implicite version"), MPI version
+        use o_MESH
+        use o_ARRAYS
+        use o_PARAM
+    
+        use g_PARSUP
+        use g_comm_auto
+    
+    IMPLICIT NONE
+    
+        real(kind=WP)   :: dmean, fD(4), fDD(4), ibv, rho_inv
+        integer         :: nodes(2), step, elem, i, elnodes(4),k,ed
+        integer         :: n, el, flag
+        real(kind=WP)   :: grad1, grad2, gradx, grady
+        real(kind=WP)   :: tmp1,tmp2
+    
+    !    call MPI_AllREDUCE(maxval(ssh_rhs),tmp1, 1, MPI_DOUBLE_PRECISION, MPI_MAX, &
+    !          MPI_COMM_FESOM_C, MPIerr)
+    !    call MPI_AllREDUCE(minval(ssh_rhs),tmp2, 1, MPI_DOUBLE_PRECISION, MPI_MIN, &
+    !          MPI_COMM_FESOM_C, MPIerr)
+    !    if (mype==0) write(*,*) 'maxmin ssh_rhs = ', tmp1,tmp2
+    
+    !==================
+    !  fill_stiff_matrix sparse
+    !==================
+        call fill_stiff_mat
+    
+    !    call MPI_AllREDUCE(maxval(SSH_stiff%values),tmp1, 1, MPI_DOUBLE_PRECISION, MPI_MAX, &
+    !          MPI_COMM_FESOM_C, MPIerr)
+    !    call MPI_AllREDUCE(minval(SSH_stiff%values),tmp2, 1, MPI_DOUBLE_PRECISION, MPI_MIN, &
+    !          MPI_COMM_FESOM_C, MPIerr)
+    !    if (mype==0) write(*,*) 'maxmin SSH_stiff%values = ', tmp1,tmp2
+    !    call MPI_AllREDUCE(maxval(eta_n),tmp1, 1, MPI_DOUBLE_PRECISION, MPI_MAX, &
+    !          MPI_COMM_FESOM_C, MPIerr)
+    !    call MPI_AllREDUCE(minval(eta_n),tmp2, 1, MPI_DOUBLE_PRECISION, MPI_MIN, &
+    !          MPI_COMM_FESOM_C, MPIerr)
+    !    if (mype==0) write(*,*) 'maxmin eta_n = ', tmp1,tmp2
+    
+    !==================
+    !  solve matrix with rhs
+    !==================
+    
+        call solve_ssh
+    
+    !    call MPI_AllREDUCE(maxval(eta_tmp),tmp1, 1, MPI_DOUBLE_PRECISION, MPI_MAX, &
+    !          MPI_COMM_FESOM_C, MPIerr)
+    !    call MPI_AllREDUCE(minval(eta_tmp),tmp2, 1, MPI_DOUBLE_PRECISION, MPI_MIN, &
+    !          MPI_COMM_FESOM_C, MPIerr)
+    !    if (mype==0) write(*,*) 'maxmin eta_tmp = ', tmp1,tmp2
+        do n=1,myDim_nod2D
+            eta_n_2(n) = eta_n_1(n)
+            eta_n_1(n) = eta_n(n)
+            eta_n(n)   = eta_tmp(n) + eta_n(n)
+        end do
+    
+#ifdef USE_MPI
+      call exchange_nod(eta_n_2)
+      call exchange_nod(eta_n_1)
+      call exchange_nod(eta_n)
+      call exchange_nod(eta_tmp)
+#endif
+    !++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+    ! AA compute sediment model
+    !IK not in MPI version yet    If (comp_sediment) call sediment
+    ! AA
+    !++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+    
+    
+    end subroutine timestep_AB3
+    
+    SUBROUTINE update_vel
+        ! update velocity for implicite eta,
+        ! Ivan : MPI version
+        use o_MESH
+        use o_ARRAYS
+        use o_PARAM
+        use g_PARSUP
+        use g_comm_auto
+    IMPLICIT NONE
+        integer   :: elem, elnodes(4), nz
+        real(kind=WP) :: eta(4)
+        real(kind=WP) :: Fx, Fy, elem_depth
+    
+        do elem = 1,myDim_elem2D
+            elnodes = elem2D_nodes(:, elem)
+            eta(1:4) = -g * dt * eta_tmp(elnodes(1:4)) ! aaa eta_n ---> eta_tmp !!!
+            Fx = sum( gradient_sca(1:4, elem) * eta(1:4) )
+            Fy = sum( gradient_sca(5:8, elem) * eta(1:4) )
+            do nz = 1, nsigma-1
+                U_n(nz,elem) = U_rhs(nz, elem) + Fx
+                V_n(nz,elem) = V_rhs(nz, elem) + Fy
+            end do
+        end do
+#ifdef USE_MPI
+        call exchange_elem(U_n)
+        call exchange_elem(V_n)
+#endif
+    !aaa if (im_vert_visc) call momentum_vert_impl_visc
+    !aaa if (im_vert_visc_fic) call momentum_vert_impl_visc_tmp
+    
+    end subroutine update_vel
+    
+    !===================================================================================
+    subroutine compute_ssh_rhs
+        !! Felix: subroutine compute_ssh_rhs from oce_dyn.F90 (from FESOM2 code)
+        !! Ivan: MPI version, rewrite it again follow the FESOM2
+        use o_MESH
+        use o_ARRAYS
+        use o_PARAM
+    
+        use g_PARSUP
+        use g_comm_auto
+    
+    IMPLICIT NONE
+    
+        integer       :: ed, el(2), enodes(2),  nz, n, i, j, q
+        real(kind=WP) :: c1, c2, deltaX1, deltaX2, deltaY1, deltaY2
+        real(kind=WP) :: rhs_check
+    
+        logical       :: exist
+    
+        ssh_rhs = 0.0_WP
+        !___________________________________________________________________________
+        ! loop over local edges
+        do ed = 1, myDim_edge2D
+            ! local indice of nodes that span up edge ed
+            enodes = edge_nodes(:,ed)
+            ! local index of element that contribute to edge
+            el = edge_tri(:,ed)
+            !_______________________________________________________________________
+            ! calc depth integral: alpha*\nabla\int(U_n+U_rhs)dz for el(1)
+            c1 = 0.0_WP
+            ! edge_cross_dxdy(1:2,ed)... dx,dy distance from element centroid el(1) to
+            ! center of edge --> needed to calc flux perpedicular to edge from elem el(1)
+            deltaX1 = edge_cross_dxdy(1,ed)
+            deltaY1 = edge_cross_dxdy(2,ed)
+            do nz = 1, nsigma - 1
+                c1 = c1 + ( Je( nz, el(1) ) ) * &
+                       (  ( V_n(nz, el(1)) + V_rhs(nz, el(1)) ) * deltaX1 &
+                     - ( U_n(nz, el(1)) + U_rhs(nz, el(1)) ) * deltaY1  )
+                !  c1 = c1 + (( UV( 2, nz, el(1) ) + alpha * UV_rhs( 2, nz, el(1) )) * deltaX1 &
+                !          - ( UV( 1, nz, el(1) ) + alpha * UV_rhs( 1, nz, el(1) ) ) * deltaY1 ) * ( Je( nz, el(1) ) )
+                !original FESOM2 code:
+                !c1=c1+alpha*((UV(2,nz,el(1))+UV_rhs(2,nz,el(1)))*deltaX1- &
+                !             (UV(1,nz,el(1))+UV_rhs(1,nz,el(1)))*deltaY1)*helem(nz,el(1))
+            end do
+            !_______________________________________________________________________
+            ! if ed is not a boundary edge --> calc depth integral:
+            ! alpha*\nabla\int(U_n+U_rhs)dz for el(2)
+            c2 = 0.0_WP
+            if (el(2)>0) then
+                deltaX2 = edge_cross_dxdy( 3, ed )
+                deltaY2 = edge_cross_dxdy( 4, ed )
+                do nz = 1, nsigma - 1
+                    c2 = c2 - Je(nz, el(2)) * &
+                        (  ( V_n(nz, el(2)) + V_rhs(nz, el(2)) ) * deltaX2 &
+                      - ( U_n(nz, el(2)) + U_rhs(nz, el(2)) ) * deltaY2  )
+                    !  c2 = c2 - (( UV(2,nz,el(2))+alpha*UV_rhs(2,nz,el(2)))*deltaX2- &
+                    !            ( UV(1,nz,el(2))+alpha*UV_rhs(1,nz,el(2))) *deltaY2) * (zbar(nz)-zbar(nz+1))
+                    !original FESOM2 code c2=c2-alpha*((UV(2,nz,el(2))+UV_rhs(2,nz,el(2)))*deltaX2- &
+                    !             (UV(1,nz,el(2))+UV_rhs(1,nz,el(2)))*deltaY2)*helem(nz,el(2))
+                end do
+            end if
+            !_______________________________________________________________________
+            ! calc netto "flux"
+            ssh_rhs( enodes(1) ) = ssh_rhs( enodes(1) ) + (c1 + c2)
+            ssh_rhs( enodes(2) ) = ssh_rhs( enodes(2) ) - (c1 + c2)
+        end do
+    
+        !!! Ivan: change to new OB ssh (like in compute_ssh_rhs_elem) , but change time_2D!!
+        if (TF_presence .and. mynobn>0)  then
+            ssh_rhs(my_in_obn)=0.0_WP
+            do i=1,mynobn
+                n=my_in_obn(i)
+                q=my_in_obn_idx(i)
+                !ssh_rhs(n)=0.0_WP
+                do j=1,12
+                    ssh_rhs(n) = ssh_rhs(n)+amp_factor(j)*ampt(q,j)&
+                    *cos((time_jd-time_jd0)*86400.0_WP*2.0_WP*pi/(Harmonics_tf_period(j)*3600._WP) - fazt(q,j)+phy_factor(j))
+                end do
+                ssh_rhs(n) = ssh_rhs(n) - eta_n(n)
+                ! If first time step (remove eta from -dt time)
+    !            if (n_dt==0) then
+    !                print *, "first time step apply delta t in ssh_rhs OB"
+    !                do j=1,12
+    !                    ssh_rhs(n) = ssh_rhs(n)-amp_factor(j)*ampt(q,j)&
+    !                    *cos((time_jd-time_jd0-dt)*86400.0_WP*2.0_WP*pi/(Harmonics_tf_period(j)*3600._WP) - fazt(q,j)+phy_factor(j))
+    !                end do
+    !            end if
+    
+            enddo
+        endif
+    
+#ifdef USE_MPI
+      call exchange_nod(ssh_rhs)
+#endif
+    !! P-E !!!!!!!!!!!!!
+    !!! ATM pressure !!!!!
+    !___________________________________________________________________________
+    ! take into account water flux
+    end subroutine compute_ssh_rhs
+    
+    subroutine fill_stiff_mat
+        ! Felix: set the values of the matrix. Mostly taken from oce_dyn.F90 (FESOM2 code)
+        ! Ivan: rewrite for MPI
+        ! this is mixture from Felix/AA(serial) and FESOM2(MPI) code
+        !
+    
+        use o_ARRAYS
+        use o_PARAM
+        use o_MESH
+    
+        use g_PARSUP
+        use g_comm_auto
+    
+    implicit none
+    
+        integer                                 :: i, n, n2, npos(4), offset, j
+        integer                                 :: ed, el(2), elem, row, elnodes(4),enodes(2)
+        real(kind=WP)                           :: elem_depth, fy(4), factor
+        integer, allocatable, dimension(:)      :: n_num
+    
+        integer :: allocate_status
+        character*10                         :: npes_string
+        character*1000                       :: file_name
+    
+    !write(npes_string,"(I10)") mype
+    !file_name=trim(npes_string)//'.out'
+    !open(500,file=file_name)
+    
+    !write(500,*) SSH_stiff%colind
+    !write(500,*) "trell ----------------------------------- "
+    !write(500,*) SSH_stiff%rowptr
+    !write(500,*) "trell ----------------------------------- "
+    !write(500,*) mype, "error: 1"
+    
+        allocate( n_num(myDim_nod2D+eDim_nod2D), STAT = allocate_status )
+        if (allocate_status /= 0) then
+            write(*,*) "ERROR during allocation: allocate_status ",allocate_status
+        end if
+        n_num=0
+    
+        ! why put to 0 ? FESOM2 does not have it
+        ssh_stiff%values = 0.0_WP
+    
+        factor=g*dt
+    
+        do ed=1, myDim_edge2D   !! Attention
+            ! enodes ... local node indices of nodes that edge ed
+            enodes = edge_nodes(:, ed)
+            ! el ... local element indices of the two elments that contribute to edge
+            ! el(1) or el(2) < 0 than edge is boundary edge
+            el=edge_tri(:,ed)
+            do j=1,2
+                ! row ... local indice od edge node 1 or 2
+                row=enodes(j)
+                if(row>myDim_nod2D) cycle    !! Attention
+    
+                !___________________________________________________________________
+                ! sparse indice offset for node with index row
+                offset=SSH_stiff%rowptr(row)-ssh_stiff%rowptr(1)
+                ! loop over number of neghbouring nodes of node-row
+                do n=1,SSH_stiff%rowptr(row+1)-SSH_stiff%rowptr(row)
+                    ! nn_pos ... local indice position of neigbouring nodes
+                    ! n2 ... local indice of n-th neighbouring node to node-row
+                    n2=nn_pos(n,row)
+                    ! n_num(n2) ... global sparse matrix indices of local mesh point n2
+                    n_num(n2)=offset+n
+                end do
+                !___________________________________________________________________
+                do i=1,2  ! Two elements related to the edge
+                            ! It should be just grad on elements
+                    ! elem ... local element index to calc grad on that element
+                    elem=el(i)
+    
+                    if(elem<1) cycle
+    
+                    ! elnodes ... local node indices of nodes that form element elem
+                    elnodes=elem2D_nodes(:,elem)
+    
+                    ! here update of second term on lhs of eq. 18 in Danilov etal 2017
+                    ! FESOM2 coments
+                    ! --> in the initialisation of the stiff matrix the integration went
+                    !     over the unperturbed ocean depth using -zbar_e_bot
+                    ! --> here this therm is now updated with the actual change in ssh
+                    !     interpolated to the element dhe
+                    ! calculate: - alpha*theta*g*tau*grad*(int_0^hbar(grad*(eta^(n+1)-eta^n))*dz)
+                    ! FESOM-C
+    
+                    elem_depth = sum( w_cv(1:4, elem) * zbar(nsigma, elnodes(1:4)) )
+                    fy(1:4) = - elem_depth * &
+                              (  gradient_sca(1:4,elem) * edge_cross_dxdy(2*i  ,ed)  &
+                               - gradient_sca(5:8,elem) * edge_cross_dxdy(2*i-1,ed)  )
+                    if(i==2) fy=-fy
+                    if(j==2) fy=-fy
+    
+                    ! In the computation above, I've used rules from ssh_rhs (where it is
+                    ! on the rhs. So the sign is changed in the expression below.
+                    ! npos... sparse matrix indices position of node points elnodes
+                    npos=n_num(elnodes)
+                    SSH_stiff%values(npos)=SSH_stiff%values(npos) + fy*factor
+    
+                end do ! --> do i=1,2
+            end do ! --> do j=1,2
+        end do ! --> do ed=1,myDim_edge2D
+    
+    !write(500,*) mype, "error: 3"
+    !call MPI_Barrier(MPI_COMM_FESOM_C,MPIerr)
+    !write(500,*) maxval(ssh_stiff%rowptr),ssh_stiff%nza
+    
+    
+    !!#############################################!!
+    !! Felix: matrix for open boundary nodes and diagonal
+    ! the elevation at the open boundary nodes is given for every timestep. So it
+    ! doesnt has to be calculated. To get the right solution we set the diagonal
+    ! to one and the right hand side to the solution we want to get.
+    ! The solution is already set in the subroutine compute_ssh_rhs, so we only set
+    ! the diagonal to one for the open boundary nodes
+        do row=1, myDim_nod2D
+            !offset=SSH_stiff%rowptr_loc(row)
+            offset=SSH_stiff%rowptr(row)-ssh_stiff%rowptr(1)+1
+            !print *, "ssh_rowptr:", offset, SSH_stiff%rowptr_loc(row)
+            if ( index_nod2D(row) == 2 ) then !diagonal for open boundary nodes
+                ! offset for node raw in globe matrix
+                n = ssh_stiff%rowptr(row+1) - ssh_stiff%rowptr(1)
+                SSH_stiff%values(offset)=1.0_WP
+                SSH_stiff%values(offset+1:n)=0.0_WP
+            else !diagonal otherwise
+                SSH_stiff%values(offset)=SSH_stiff%values(offset) + area(row)/dt
+            endif
+        end do
+    !write(500,*) mype, "error: 4"
+    !call MPI_Barrier(MPI_COMM_FESOM_C,MPIerr)
+    
+        deallocate(n_num, STAT = allocate_status)
+    !write(500,*) mype, allocate_status
+        if (allocate_status /= 0) then
+            write(*,*) "ERROR: allocate_status ",allocate_status
+            STOP
+        end if
+    
+    !write(500,*) mype, "error: 5"
+    !call MPI_Barrier(MPI_COMM_FESOM_C,MPIerr)
+    
+    end subroutine fill_stiff_mat
+    
+    subroutine solve_ssh
+    !#########################################################################!
+    ! Felix: set up the parms solver and solve the equation with CG (or GMRES or...)
+    ! taken mostly from oce_dyn.F90 (FESOM2)
+    ! Ivan : MPI version
+        use o_PARAM
+        use o_MESH
+        use o_ARRAYS
+    
+        use g_PARSUP
+        use g_comm_auto
+    
+        use iso_c_binding, only: C_INT, C_DOUBLE
+    implicit none
+#include "fparms.h"
+        logical, save           :: lfirst_tag=.true.
+        integer(kind=C_INT)     :: ident
+        integer(kind=C_INT)     :: n3, reuse, new_values
+        integer(kind=C_INT)     :: maxiter, restart_it, lutype, fillin
+        real(kind=C_DOUBLE)     :: droptol, soltol
+        integer                 :: n, partitionen(2)
+        integer, allocatable, dimension(:)        :: rowptr, colind
+    
+        interface
+           subroutine psolver_init(ident, SOL, PCGLOB, PCLOC, lutype, &
+                fillin, droptol, maxiter, restart_it, soltol, &
+                part, rowptr, colind, values, reuse, MPI_COMM) bind(C)
+             use iso_c_binding, only: C_INT, C_DOUBLE
+             integer(kind=C_INT) :: ident, SOL, PCGLOB, PCLOC, lutype, &
+                                    fillin,  maxiter, restart_it, &
+                                    part(*), rowptr(*), colind(*), reuse, MPI_COMM
+             real(kind=C_DOUBLE) :: droptol,  soltol, values(*)
+           end subroutine psolver_init
+        end interface
+    
+        interface
+           subroutine psolve(ident, ssh_rhs, values, eta_tmp, newvalues) bind(C)
+    
+             use iso_c_binding, only: C_INT, C_DOUBLE
+             integer(kind=C_INT) :: ident, newvalues
+             real(kind=C_DOUBLE) :: values(*), ssh_rhs(*), eta_tmp(*)
+    
+           end subroutine psolve
+        end interface
+    
+        ! reuse=0: matrix remains static
+        ! reuse=1: keeps a copy of the matrix structure to apply scaling of the matrix fast
+    
+        if (lfirst_tag) then
+            ident=1
+            reuse=1      ! For varying coefficients, set reuse=1
+            maxiter=2000
+            restart_it=15
+            fillin=3
+            lutype=2
+            droptol=1.e-8
+            soltol=1.e-10
+    !        partitionen(1)=0
+    !        partitionen(2)=nod2D
+    
+            !#########################################################################!
+            ! Felix: not fast, but dont wanna get the warnings every time i compile
+            ! so it does for the moment
+            !allocate(rowptr(nod2D-1))
+            !allocate(colind(ssh_stiff%nza))
+            !rowptr=ssh_stiff%rowptr(:)-ssh_stiff%rowptr(1)
+            !colind=ssh_stiff%colind-1
+    
+               ! Set SOLCG for CG solver (symmetric, positiv definit matrices only, no precond available!!)
+               !     SOLBICGS for BiCGstab solver (arbitrary matrices)
+               !     SOLBICGS_RAS for BiCGstab solver (arbitrary matrices) with integrated RAS - the global
+               !                  preconditioner setting is ignored! It saves a 4 vector copies per iteration
+               !                  compared to SOLBICGS + PCRAS.
+               !     SOLPBICGS for pipelined BiCGstab solver (arbitrary matrices)
+               !               Should scale better than SOLBICGS, but be careful, it is still experimental.
+               !     SOLPBICGS_RAS is SOLPBICGS with integrated RAS (global preconditioner setting is ignored!)
+               !                   for even better scalability, well, in the end, it does not matter much.
+        !   call psolver_init(ident, SOLGMRES, PCRAS, PCILUK, lutype, &
+        !   call psolver_init(ident, SOLBICGS, PCRAS, PCILUK, lutype, &
+        !!!!!!!!!!!!!!!!!!!!!!!!!!!! SOLCG
+            call psolver_init(ident, SOLCG, PCRAS, PCILUK, lutype, &
+                                fillin, droptol, maxiter, restart_it, soltol, &
+                                part-1, ssh_stiff%rowptr(:)-ssh_stiff%rowptr(1), &
+                                ssh_stiff%colind-1, ssh_stiff%values, reuse, MPI_COMM_FESOM_C)
+            lfirst_tag=.false.
+            !deallocate(rowptr, colind)
+            !!!! Check this out if you add restart!!!!!!!!
+            !!! there is a bug in the solver, crashing when all ssh_rhs are 0 (zero)
+    
+    !if (mype==0) write(*,*) "Attention: at first solver call (1st time step) ssh_rhs=0.01!!! change this if you use restart"
+    !        ssh_rhs = ssh_rhs + 0.01_WP
+    
+        end if
+    
+        ident=1
+        new_values=0 ! and new_values=1, as soon as the coefficients have changed
+    
+        ! new_values=0: matrix coefficients unchanged (compared to the last call of psolve)
+        ! new_values=1: replaces the matrix values (keeps the structure and the preconditioner)
+        ! new_values=2: replaces the matrix values and recomputes the preconditioner (keeps the structure)
+    
+        ! new_values>0 requires reuse=1 in psolver_init!
+    
+        call psolve(ident, ssh_rhs, ssh_stiff%values, eta_tmp, new_values)
+    
+        call exchange_nod(eta_tmp) !is this required after calling psolve ?
+    
+    end subroutine solve_ssh
+    
+
+!=======================
+!====================================================================================
+
+
+
 
 SUBROUTINE solve_tracers
 

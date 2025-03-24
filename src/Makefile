@@ -2,10 +2,10 @@
 
 include Makefile.in
 
-.SUFFIXES: .F90 .o
+.SUFFIXES: .F90 .o .c
 
-LIBS =  $(NETCDFLIB) $(PNETCDFLIB)
-INCS =  $(NETCDFINC) $(PNETCDFINC)
+LIBS =  $(NETCDFLIB) $(PNETCDFLIB) $(LIB_PARMS)
+INCS =  $(NETCDFINC) $(PNETCDFINC) $(PARMS_INC)
 
 OBJECTS= fv_var.o                  \
       gen_modules_partitioning_c.o \
@@ -39,6 +39,7 @@ OBJECTS= fv_var.o                  \
       fv_sediment.o      \
       fv_sediment_adv.o      \
       fv_output_nc_TMP.o \
+      psolve.o \
       fv_main.o  
 
 
@@ -90,4 +91,4 @@ run : $(EXE)
 	$(FC)  $(FCFLAGS) $(INCS) -c $*.F90
 
 .c.o:
-	$(CC) $(CCFLAGS) $(INCS_INI) -c $*.c
+	$(CC) $(CCFLAGS) $(INCS_INI) $(INCS) $(CPP_DEFS) $(PARMS_DEFS) -c $*.c
