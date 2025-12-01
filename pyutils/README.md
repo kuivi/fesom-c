@@ -5,7 +5,7 @@ Python utilities for working with FESOM-C (Finite Volume Ocean Model) output and
 ## Scripts
 
 ### Mesh Processing
-- **mesh_fesomc.py** - FESOM-C mesh class for loading and processing unstructured mesh data (supports 'drift' and 'rise' models)
+- **mesh_fesomc.py** - FESOM-C mesh class for loading and processing unstructured mesh data (used in 'drift' and 'rise' models)
 - **load_mesh_c_data.py** - Load mesh and data from FESOM-C output files
 - **msh2shp.py** - Convert FESOM-C mesh to shapefile format
 
