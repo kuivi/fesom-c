@@ -4,7 +4,7 @@ This repository contains the source code and configuration for the Fesom-C model
 
 ## Model Description
 
-FESOM-C implements a 3D finite-volume, cell-vertex discretization on unstructured meshes. Its core features include:
+FESOM-C implements a finite-volume, cell-vertex discretization on unstructured meshes. Its core features include:
 
 - Hybrid unstructured meshes combining **triangular and quadrilateral cells**, giving flexibility in mesh geometry and resolution. This allows dense resolution in areas of interest and coarser elsewhere. 
 - A **terrain-following vertical (sigma) coordinate system**, suitable for coastal, shelf, or variable bathymetry regions. 
