@@ -1,0 +1,107 @@
+# Configuration file for FESOM-C Initial Conditions preparation tool
+
+# Input files
+input:
+  fesomc_mesh_dir: "./fesomc/mesh/"
+  fesomc_nodes_file: "nod2d.out"
+  fesomc_elements_file: "elem2d.out"
+
+  fesom2_data_dir: "./fesom2/"
+  fesom2_mesh_file: "fesom.mesh.diag.nc"
+
+  # For IC: single file with specific year
+  fesom2_temp_file: "temp.fesom.2020.nc"
+  fesom2_salt_file: "salt.fesom.2020.nc"
+  fesom2_time_index: 0  # Which time step to use for IC (0 = first)
+
+  # For BC: file pattern with {year} placeholder
+  fesom2_temp_pattern: "temp.fesom.{year}.nc"
+  fesom2_salt_pattern: "salt.fesom.{year}.nc"
+
+# Mesh configuration
+mesh:
+  is_cartesian: false  # Are coordinates in Cartesian or spherical?
+
+# Regular grid configuration
+regular_grid:
+  resolution: [500, 500]  # Number of points [lon_points, lat_points]
+  margin_degrees: 1.0  # Extra margin around FESOM-C mesh bounds
+  use_resolution_in_meters: false  # If true, resolution is in meters instead of number of points
+
+# Interpolation configuration
+interpolation:
+  k_neighbors: 10  # Number of nearest neighbors for inverse distance weighting
+  use_idw: true  # If false, use nearest neighbor (k=1)
+  max_iterations: 100  # Max iterations for extrapolation to fill NaNs
+  idw_power: 2  # Power for inverse distance weighting (w = 1/distance^idw_power)
+
+# Data filtering
+data_filtering:
+  temp_min: -2.5  # Minimum valid temperature (°C)
+  temp_max: 40.0  # Maximum valid temperature (°C)
+  salt_min: 0.0   # Minimum valid salinity (PSU)
+  salt_max: 50.0  # Maximum valid salinity (PSU)
+
+# Optional smoothing
+smoothing:
+  enabled: false  # Set to true to apply Savitzky-Golay filter
+  window_length: 3  # Window length for Savitzky-Golay filter (must be odd)
+  polyorder: 1  # Polynomial order for Savitzky-Golay filter
+
+# Stability check
+stability:
+  check_density: true  # Check and fix density instabilities
+  max_iterations: 100  # Max iterations to fix instabilities
+
+# Output configuration
+output:
+  output_file: "ic_fesomc_from_fesom2.nc"
+  add_boundary_depths: true  # Add extra depth levels at surface and bottom
+  shallow_depth: -20.0  # Depth for shallowest extra level (meters)
+  deep_depth: 10000.0  # Depth for deepest extra level (meters)
+
+# Diagnostics
+diagnostics:
+  print_statistics: true  # Print min/max/mean statistics
+  create_plots: true  # Create surface plots
+  plot_file: "ic_surface_plot.png"  # Output plot filename
+  verbose: true  # Print progress messages
+
+  # Advanced plotting options
+  create_profile_plots: true  # Create T/S profile plots at random points
+  profile_plot_file: "ic_profiles.png"  # Profile plot filename
+  num_profile_points: 3  # Number of random points for profiles
+
+  create_native_mesh_plot: true  # Create plot on native FESOM-C mesh
+  native_mesh_plot_file: "ic_native_mesh.png"  # Native mesh plot filename
+
+# Boundary Conditions (BC) preparation
+# Use prepare_bc_fesom.py script for BC (separate from IC)
+boundary_conditions:
+  # Years to process (BC reads ALL time steps from each year's file)
+  years: [2020]  # Single year, or multiple: [2020, 2021, 2022]
+
+  # Spatial filtering
+  margin_degrees: 2.0  # Extra margin around boundary nodes (degrees)
+
+  # Interpolation settings
+  interpolation:
+    k_neighbors: 10  # Number of nearest neighbors
+    use_idw: true  # Use inverse distance weighting
+    idw_power: 2  # Power for IDW (w = 1/d^2)
+
+  # Density stability check
+  check_density: true  # Check and fix density instabilities
+  max_iterations: 100  # Max iterations per time step for stability check
+
+  # Output configuration
+  output_file: "bc_fesomc_from_fesom2.nc"
+  time_reference: "1990-01-01 00:00:00"  # Reference date for time units
+
+  # Plotting options
+  create_hovmoller_plots: true  # Create Hovmuller diagrams (time vs depth)
+  hovmoller_plot_file: "bc_hovmoller.png"
+  num_hovmoller_points: 3  # Number of random boundary points for Hovmuller
+
+  create_spatial_plots: true  # Create spatial BC distribution plots
+  spatial_plot_file: "bc_spatial.png"
