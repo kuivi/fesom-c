@@ -319,7 +319,7 @@ Time depends on:
 
 ## References
 
-- **FESOM-C**: Finite Element Sea ice-Ocean Model - C version
+- **FESOM-C**: https://github.com/kuivi/fesom-c ; Kuznetsov, I., Rabe, B., Androsov, A., Fang, Y.-C., Hoppmann, M., Quintanilla-Zurita, A., Harig, S., Tippenhauer, S., Schulz, K., Mohrholz, V., Fer, I., Fofonova, V., and Janout, M.: Dynamical reconstruction of the upper-ocean state in the central Arctic during the winter period of the MOSAiC expedition, Ocean Sci., 20, 759–777, https://doi.org/10.5194/os-20-759-2024, 2024.
 - **FESOM2**: https://fesom2.readthedocs.io/
 - **GSW**: Gibbs SeaWater Oceanographic Toolbox, https://www.teos-10.org/
 
