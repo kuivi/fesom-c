@@ -1,6 +1,9 @@
 # Fesom-C Model - Regional / Coatsal / Deep-Water Ocean Simulations
 
-This repository contains the source code and configuration for the Fesom-C model used in our studies.  
+This repository contains the source code and configuration for the Fesom-C model used in our studies.
+
+A. Androsov, V. Fofonova, I. Kuznetsov, S. Danilov, N. Rakowsky, S. Harig, H. Brix and K. H. Wiltshire, "FESOM-C v.2: coastal dynamics on hybrid unstructured meshes," Geoscientific Model Development, vol. 12, pp. 1009-1028, mar 2019. https://doi.org/10.5194/gmd-12-1009-2019
+
 If you use this model or these utilities, please cite our publication:
 
 Kuznetsov, I., Rabe, B., Androsov, A., Fang, Y.-C., Hoppmann, M., Quintanilla-Zurita, A., Harig, S., Tippenhauer, S., Schulz, K., Mohrholz, V., Fer, I., Fofonova, V., and Janout, M.: Dynamical reconstruction of the upper-ocean state in the central Arctic during the winter period of the MOSAiC expedition, Ocean Sci., 20, 759–777, https://doi.org/10.5194/os-20-759-2024, 2024.
